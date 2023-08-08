@@ -201,3 +201,549 @@ nodes:
         message: runtime-node/rust-operator/status
 
 ```
+
+运行结果：
+```
+Descriptor {
+    version: "1.0",
+    deploy: Deploy {
+        machine: Some(
+            WorkId(
+                "worker_node_id",     
+            ),
+        ),
+        cpu: None,
+        gpu: None,
+        memory: None,
+        min_workers: None,
+        max_wowkers: None,
+    },
+    nodes: [
+        Node {
+            id: NodeId(
+                "python_source_image",
+            ),
+            name: None,
+            description: None,        
+            env: None,
+            deploy: Deploy {
+                machine: None,        
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,    
+                max_wowkers: None,    
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "./python_source_node.py",
+                    args: None,
+                    envs: None,
+                    build: None,
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "tick",
+                            ): Input {
+                                mapping: Timer {
+                                    interval: 100ms,
+                                },
+                                queue_size: Some(
+                                    1000,
+                                ),
+                            },
+                        },
+                        outputs: {
+                            DataId(
+                                "image",
+                            ),
+                        },
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "python_object_detection",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "./object_detection.py",
+                    args: None,
+                    envs: None,
+                    build: None,
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "image",
+                            ): Input {
+                                mapping: User(
+                                    UserInputMapping {
+                                        source: NodeId(
+                                            "python_source_image",
+                                        ),
+                                        output: DataId(
+                                            "image",
+                                        ),
+                                    },
+                                ),
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {
+                            DataId(
+                                "bbox",
+                            ),
+                        },
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "python_plot",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "./plot.py",
+                    args: None,
+                    envs: None,
+                    build: None,
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "bbox",
+                            ): Input {
+                                mapping: User(
+                                    UserInputMapping {
+                                        source: NodeId(
+                                            "python_object_detection",
+                                        ),
+                                        output: DataId(
+                                            "bbox",
+                                        ),
+                                    },
+                                ),
+                                queue_size: None,
+                            },
+                            DataId(
+                                "image",
+                            ): Input {
+                                mapping: User(
+                                    UserInputMapping {
+                                        source: NodeId(
+                                            "python_source_image",
+                                        ),
+                                        output: DataId(
+                                            "image",
+                                        ),
+                                    },
+                                ),
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {},
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "cxx-node-rust-api",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "build/node_rust_api",
+                    args: None,
+                    envs: None,
+                    build: None,
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "tick",
+                            ): Input {
+                                mapping: Timer {
+                                    interval: 300ms,
+                                },
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {
+                            DataId(
+                                "counter",
+                            ),
+                        },
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "cxx-node-c-api",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "build/node_c_api",
+                    args: None,
+                    envs: None,
+                    build: None,
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "tick",
+                            ): Input {
+                                mapping: Timer {
+                                    interval: 300ms,
+                                },
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {
+                            DataId(
+                                "counter",
+                            ),
+                        },
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "runtime-node-1",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Operators(
+                MultipleOperatorDefinitions {
+                    operators: [
+                        NormalOperatorDefinition {
+                            id: OperatorId(
+                                "operator-rust-api",
+                            ),
+                            config: OperatorConfig {
+                                name: None,
+                                description: None,
+                                source: SharedLibrary(
+                                    "build/operator_rust_api",
+                                ),
+                                build: None,
+                                run_config: NodeRunConfig {
+                                    inputs: {
+                                        DataId(
+                                            "counter_1",
+                                        ): Input {
+                                            mapping: User(
+                                                UserInputMapping {
+                                                    source: NodeId(
+                                                        "cxx-node-c-api",
+                                                    ),
+                                                    output: DataId(
+                                                        "counter",
+                                                    ),
+                                                },
+                                            ),
+                                            queue_size: None,
+                                        },
+                                        DataId(
+                                            "counter_2",
+                                        ): Input {
+                                            mapping: User(
+                                                UserInputMapping {
+                                                    source: NodeId(
+                                                        "cxx-node-rust-api",
+                                                    ),
+                                                    output: DataId(
+                                                        "counter",
+                                                    ),
+                                                },
+                                            ),
+                                            queue_size: None,
+                                        },
+                                    },
+                                    outputs: {
+                                        DataId(
+                                            "status",
+                                        ),
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "runtime-node-2",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Operators(
+                MultipleOperatorDefinitions {
+                    operators: [
+                        NormalOperatorDefinition {
+                            id: OperatorId(
+                                "operator-c-api",
+                            ),
+                            config: OperatorConfig {
+                                name: None,
+                                description: None,
+                                source: SharedLibrary(
+                                    "build/operator_c_api",
+                                ),
+                                build: None,
+                                run_config: NodeRunConfig {
+                                    inputs: {
+                                        DataId(
+                                            "op_status",
+                                        ): Input {
+                                            mapping: User(
+                                                UserInputMapping {
+                                                    source: NodeId(
+                                                        "runtime-node-1",
+                                                    ),
+                                                    output: DataId(
+                                                        "operator-rust-api/status",
+                                                    ),
+                                                },
+                                            ),
+                                            queue_size: None,
+                                        },
+                                    },
+                                    outputs: {
+                                        DataId(
+                                            "half-status",
+                                        ),
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "rust-node",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "../../target/debug/so",
+                    args: None,
+                    envs: None,
+                    build: Some(
+                        "cargo build -p target",
+                    ),
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "tick",
+                            ): Input {
+                                mapping: Timer {
+                                    interval: 10ms,
+                                },
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {
+                            DataId(
+                                "random",
+                            ),
+                        },
+                    },
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "runtime-node",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Operators(
+                MultipleOperatorDefinitions {
+                    operators: [
+                        NormalOperatorDefinition {
+                            id: OperatorId(
+                                "rust-operator",
+                            ),
+                            config: OperatorConfig {
+                                name: None,
+                                description: None,
+                                source: SharedLibrary(
+                                    "../../target/debug/so",
+                                ),
+                                build: Some(
+                                    "cargo build -p target",
+                                ),
+                                run_config: NodeRunConfig {
+                                    inputs: {
+                                        DataId(
+                                            "random",
+                                        ): Input {
+                                            mapping: User(
+                                                UserInputMapping {
+                                                    source: NodeId(
+                                                        "rust-node",
+                                                    ),
+                                                    output: DataId(
+                                                        "random",
+                                                    ),
+                                                },
+                                            ),
+                                            queue_size: None,
+                                        },
+                                        DataId(
+                                            "tick",
+                                        ): Input {
+                                            mapping: Timer {
+                                                interval: 100ms,
+                                            },
+                                            queue_size: None,
+                                        },
+                                    },
+                                    outputs: {
+                                        DataId(
+                                            "status",
+                                        ),
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                },
+            ),
+        },
+        Node {
+            id: NodeId(
+                "rust-sink",
+            ),
+            name: None,
+            description: None,
+            env: None,
+            deploy: Deploy {
+                machine: None,
+                cpu: None,
+                gpu: None,
+                memory: None,
+                min_workers: None,
+                max_wowkers: None,
+            },
+            kind: Custom(
+                CustomNode {
+                    source: "../../target/debug/so",
+                    args: None,
+                    envs: None,
+                    build: Some(
+                        "cargo build -p target",
+                    ),
+                    run_config: NodeRunConfig {
+                        inputs: {
+                            DataId(
+                                "message",
+                            ): Input {
+                                mapping: User(
+                                    UserInputMapping {
+                                        source: NodeId(
+                                            "runtime-node",
+                                        ),
+                                        output: DataId(
+                                            "rust-operator/status",
+                                        ),
+                                    },
+                                ),
+                                queue_size: None,
+                            },
+                        },
+                        outputs: {},
+                    },
+                },
+            ),
+        },
+    ],
+}
+```
+
+
