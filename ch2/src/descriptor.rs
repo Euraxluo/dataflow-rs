@@ -1,4 +1,5 @@
-use anyhow::Result;
+use crate::visualize::{self};
+use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_with_expand_env::with_expand_envs;
@@ -7,6 +8,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     convert::Infallible,
     fmt,
+    path::Path,
     str::FromStr,
     time::Duration,
 };
@@ -15,7 +17,7 @@ use std::{
 macro_rules! custom_type_of_String {
     ($vis:vis $name:ident) => {
         #[doc = concat!("The `", stringify!($name), "` is an alias for String.")]
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[derive(Debug, Clone,Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
         $vis struct $name(String);
 
         impl From<$name> for String {
@@ -90,6 +92,104 @@ pub struct Descriptor {
     pub nodes: Vec<Node>,
 }
 
+/// 实现一些函数
+pub const SINGLE_OPERATOR_DEFAULT_ID: &str = "op";
+impl Descriptor {
+    /// 处理节点的一些默认值
+    pub fn resolve_node_defaults(&self) -> Vec<Node> {
+        // 创建一个默认的操作符id
+        let default_op_id = OperatorId::from(SINGLE_OPERATOR_DEFAULT_ID.to_string());
+
+        // 找出所有的单个操作符的节点
+        // 并且转为HashMap，key是节点id，value是操作符id，一般都是 默认op
+        let single_operator_nodes: HashMap<_, _> = self
+            .nodes
+            .iter()
+            .filter_map(|n| match &n.kind {
+                NodeKind::Operator(op) => Some((&n.id, op.id.as_ref().unwrap_or(&default_op_id))),
+                _ => None,
+            })
+            .collect();
+
+        // 处理所有的节点
+        for mut node in self.nodes.clone().into_iter() {
+            // 将单op节点转为多op节点
+            // 只需要转换一下kind即可
+            node.kind = if let NodeKind::Operator(operator) = node.kind {
+                // 如果是单个操作符节点，就将其转为多个操作符节点
+                NodeKind::Operators(MultipleOperatorDefinitions {
+                    operators: vec![NormalOperatorDefinition {
+                        id: operator.id.unwrap_or_else(|| default_op_id.clone()),
+                        config: operator.config,
+                    }],
+                })
+            } else {
+                // 如果不是操作符节点，就直接返回
+                node.kind
+            };
+            // 将节点的部署信息设置为默认的部署信息
+            // 如果当前节点没有部署信息，就去获取description的部署信息
+            node.deploy = {
+                // 这里我们只处理了machine
+                let default_machine = self.deploy.machine.clone().unwrap_or_default();
+                let machine = match node.deploy.machine {
+                    Some(m) => m,
+                    None => default_machine.to_owned(),
+                };
+                // 重新设置deploy的
+                Deploy {
+                    machine: Some(machine),
+                    ..node.deploy
+                }
+            };
+
+            // 处理每个节点，每个op的输入
+            // 这里是打算将所有的Operator都转为Operators
+            let input_mappings: Vec<_> = match &mut node.kind {
+                NodeKind::Operators(node) => node
+                    .operators
+                    .iter_mut()
+                    .flat_map(|op| op.config.run_config.inputs.values_mut())
+                    .collect(),
+                NodeKind::Custom(node) => node.run_config.inputs.values_mut().collect(),
+                NodeKind::Operator(operator) => {
+                    operator.config.run_config.inputs.values_mut().collect()
+                }
+            };
+
+            for mapping in input_mappings
+                .into_iter()
+                .filter_map(|i| match &mut i.mapping {
+                    InputMapping::Timer { .. } => None,
+                    InputMapping::User(m) => Some(m),
+                })
+            {
+                if let Some(op_name) = single_operator_nodes.get(&mapping.source).copied() {
+                    mapping.output = DataId::from(format!("{op_name}/{}", mapping.output));
+                }
+            }
+        }
+
+        self.nodes.clone()
+    }
+
+    pub fn blocking_read(path: &Path) -> Result<Descriptor> {
+        let buf = std::fs::read(path).context("failed to open given file")?;
+        Descriptor::parse(buf)
+    }
+
+    pub fn parse(buf: Vec<u8>) -> Result<Descriptor> {
+        serde_yaml::from_slice(&buf).context("failed to parse given descriptor")
+    }
+
+    pub fn visualize_as_mermaid(&self) -> Result<String> {
+        let resolved = self.resolve_node_defaults();
+        let flowchart = visualize::mermaid::visualize_nodes(&resolved);
+
+        Ok(flowchart)
+    }
+}
+
 custom_type_of_String!(pub NodeId); //节点Id
 custom_type_of_String!(pub DataId); //数据Id
 custom_type_of_String!(pub WorkId); //工作节点Id
@@ -127,17 +227,13 @@ pub struct Node {
     pub id: NodeId,
     /// 节点名称
     pub name: Option<String>,
-
     /// 节点描述
     pub description: Option<String>,
-
     /// 环境变量设置
     pub env: Option<BTreeMap<String, EnvValue>>,
-
     /// 部署信息
     #[serde(default)]
     pub deploy: Deploy,
-
     /// 嵌入节点类型枚举
     #[serde(flatten)]
     pub kind: NodeKind,
@@ -171,7 +267,7 @@ pub enum NodeKind {
     Operators(MultipleOperatorDefinitions),
 }
 
-/// 自定义节点的运行配置
+/// 节点的运行配置
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRunConfig {
     #[serde(default)]
@@ -232,7 +328,7 @@ pub struct OperatorConfig {
     pub run_config: NodeRunConfig,
 }
 
-/// Operator配置信息的包装
+/// Operator配置信息的包装-普通的Operaator
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NormalOperatorDefinition {
     pub id: OperatorId,
@@ -252,13 +348,12 @@ pub struct SingleOperatorDefinition {
     pub config: OperatorConfig,
 }
 
-/// Operators列表
+/// Operators配置信息的包装-多个Operator列表
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct MultipleOperatorDefinitions {
     pub operators: Vec<NormalOperatorDefinition>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, from = "InputDef", into = "InputDef")]
@@ -291,11 +386,13 @@ pub enum InputMapping {
 
 impl InputMapping {
     pub fn source(&self) -> &NodeId {
-        static DORA_NODE_ID: OnceCell<NodeId> = OnceCell::new();
+        static DATAFLOW_NODE_ID: OnceCell<NodeId> = OnceCell::new();
 
         match self {
             InputMapping::User(mapping) => &mapping.source,
-            InputMapping::Timer { .. } => DORA_NODE_ID.get_or_init(|| NodeId("dora".to_string())),
+            InputMapping::Timer { .. } => {
+                DATAFLOW_NODE_ID.get_or_init(|| NodeId("dataflow".to_string()))
+            }
         }
     }
 }
@@ -305,7 +402,7 @@ impl fmt::Display for InputMapping {
         match self {
             InputMapping::Timer { interval } => {
                 let duration = format_duration(*interval);
-                write!(f, "dora/timer/{duration}")
+                write!(f, "dataflow/timer/{duration}")
             }
             InputMapping::User(mapping) => {
                 write!(f, "{}/{}", mapping.source, mapping.output)
@@ -368,10 +465,14 @@ impl<'de> Deserialize<'de> for InputMapping {
                 }
                 Some((other, _)) => {
                     return Err(serde::de::Error::custom(format!(
-                        "unknown dora input `{other}`"
+                        "unknown dataflow input `{other}`"
                     )))
                 }
-                None => return Err(serde::de::Error::custom("dora input has invalid format")),
+                None => {
+                    return Err(serde::de::Error::custom(
+                        "dataflow input has invalid format",
+                    ))
+                }
             },
             _ => Self::User(UserInputMapping {
                 source: source.to_owned().into(),
@@ -388,7 +489,6 @@ pub struct UserInputMapping {
     pub source: NodeId,
     pub output: DataId,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -432,4 +532,3 @@ impl From<InputDef> for Input {
         }
     }
 }
-

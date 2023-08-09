@@ -4,6 +4,7 @@ use ch2::{descriptor::Descriptor};
 use std::{fs::File, path::PathBuf};
 use anyhow::Result;
 use anyhow::Context;
+use ch2::visualize;
 
 ///dataflow command line tool
 #[derive(Parser)]
@@ -20,7 +21,11 @@ enum Graph {
     Show {
         /// yaml file path
         #[arg(short, long, value_name = "FILE")]
-        file: PathBuf
+        file: PathBuf,
+        #[clap(short,long, action)]
+        mermaid: bool,
+        #[clap(short,long, action)]
+        open: bool,
     },
 }
 
@@ -28,24 +33,8 @@ enum Graph {
 fn main() ->Result<()>{
     let command = Command::parse();
     match command.graph {
-        Graph::Show { file } => {
-            let descriptor_file = File::open(&file)
-                .context("failed to open given file")
-                .unwrap();
-
-            let descriptor: Descriptor = serde_yaml::from_reader(descriptor_file)
-                .context("failed to parse given descriptor")
-                .unwrap();
-            println!("{:#?}",descriptor);
-        //     let visualized = descriptor
-        //         .visualize_as_mermaid()
-        //         .context("failed to visualize descriptor")
-        //         .unwrap();
-            // println!("{visualized}");
-        //     println!(
-        //         "Paste the above output on https://mermaid.live/ or in a \
-        // ```mermaid code block on GitHub to display it."
-        //     );
+        Graph::Show { file,mermaid,open } => {
+            visualize::create(file, mermaid, open).unwrap();
         }
     }
 
