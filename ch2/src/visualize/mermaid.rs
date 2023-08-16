@@ -1,11 +1,10 @@
-use crate::descriptor::{format_duration, DataId, Input, InputMapping, NodeId, UserInputMapping};
+use crate::descriptor::{DataId, Input, InputMapping, NodeId, UserInputMapping, FormattedDuration};
 use crate::descriptor::{
     CustomNode, MultipleOperatorDefinitions, Node, NodeKind, NormalOperatorDefinition,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write as _,
-    fs::OpenOptions,
     time::Duration,
 };
 
@@ -23,7 +22,7 @@ pub fn visualize_nodes(nodes: &[Node]) -> String {
         writeln!(flowchart, "subgraph ___dataflow___ [dataflow]").unwrap();
         writeln!(flowchart, "  subgraph ___timer_timer___ [timer]").unwrap();
         for interval in dataflow_timers {
-            let duration = format_duration(interval);
+            let duration = FormattedDuration(interval);
             writeln!(flowchart, "    dataflow/timer/{duration}[\\{duration}/]").unwrap();
         }
         flowchart.push_str("  end\n");

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_with_expand_env::with_expand_envs;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     convert::Infallible,
     fmt,
     path::Path,
@@ -81,7 +81,6 @@ macro_rules! custom_type_of_String {
 }
 
 /// 用于解析申明式描述文件的结构体
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Descriptor {
@@ -89,13 +88,18 @@ pub struct Descriptor {
     /// 描述整个数据流的部署信息
     #[serde(default)]
     pub deploy: Deploy,
+    /// 数据流的运行节点
     pub nodes: Vec<Node>,
 }
 
 /// 实现一些函数
 pub const SINGLE_OPERATOR_DEFAULT_ID: &str = "op";
+
 impl Descriptor {
     /// 处理节点的一些默认值
+    /// 1. 将单op节点转为多op节点
+    /// 2. 将节点的部署信息设置为默认的部署信息,主要是需要处理需要将节点的默认值和描述的默认值合并
+    /// 3. 处理每个节点及OP，每个op的输出，将输出转为和输出相同的格式，转为 op_name/output
     pub fn resolve_node_defaults(&self) -> Vec<Node> {
         // 创建一个默认的操作符id
         let default_op_id = OperatorId::from(SINGLE_OPERATOR_DEFAULT_ID.to_string());
@@ -156,7 +160,8 @@ impl Descriptor {
                     operator.config.run_config.inputs.values_mut().collect()
                 }
             };
-
+            // 处理每个节点的每个 输入映射
+            // 对于所有的user类型的输入映射，都需要将其输出转为和输出相同的格式，转为 op_name/output
             for mapping in input_mappings
                 .into_iter()
                 .filter_map(|i| match &mut i.mapping {
@@ -173,15 +178,21 @@ impl Descriptor {
         self.nodes.clone()
     }
 
+    /// 从文件中读取描述文件
+    /// 然后反序列化
     pub fn blocking_read(path: &Path) -> Result<Descriptor> {
         let buf = std::fs::read(path).context("failed to open given file")?;
         Descriptor::parse(buf)
     }
 
+    /// 封装了一下反序列化函数，输入是一个字节数组，输出是一个Descriptor
+    /// 这里使用了serde_yaml::from_slice
+    /// 所以可以修改该函数修改配置文件类型
     pub fn parse(buf: Vec<u8>) -> Result<Descriptor> {
         serde_yaml::from_slice(&buf).context("failed to parse given descriptor")
     }
 
+    /// 可视化当前dataflow yaml 定义文件，作为mermaid图
     pub fn visualize_as_mermaid(&self) -> Result<String> {
         let resolved = self.resolve_node_defaults();
         let flowchart = visualize::mermaid::visualize_nodes(&resolved);
@@ -202,6 +213,7 @@ custom_type_of_String!(pub OperatorId); //OpId
 pub enum EnvValue {
     /// 指定了反序列化函数 with_expand_envs
     /// 它会在转换之前展开所有环境变量的字段
+    /// 依赖 creates serde-with-expand-env
     #[serde(deserialize_with = "with_expand_envs")]
     Bool(bool),
     #[serde(deserialize_with = "with_expand_envs")]
@@ -260,7 +272,7 @@ pub struct Deploy {
 pub enum NodeKind {
     Custom(CustomNode),
     /// 使用 SingleOperatorDefinition 来定义一个单一的 Operator
-    /// 这里的因含意思就是将Operator 作为一个Node来使用
+    /// 这里的隐含意思就是将 Node 作为一个Operator来使用
     /// 但是一般不会这么使用
     Operator(SingleOperatorDefinition),
     /// 多个配置
@@ -268,17 +280,30 @@ pub enum NodeKind {
 }
 
 /// 节点的运行配置
+/// ```yaml
+/// inputs:
+///     counter_1: cxx-node-c-api/counter
+///     tick:
+///         source: dataflow/timer/millis/100
+///         queue_size: 1000
+/// outputs:
+///     - half-status
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRunConfig {
+    /// 其中 DataId 就是 inputs 中 数据的id，如counter_1，counter_2 等
+    /// Input 就是输入的映射，其中包含了输入的来源和队列的大小
     #[serde(default)]
     pub inputs: BTreeMap<DataId, Input>,
+
+    /// yaml中定义的是一个列表，outputs需要将其反序列化为 dataId set
     #[serde(default)]
     pub outputs: BTreeSet<DataId>,
 }
 
 /// 描述了Operator的来源
-/// 并且所有都使用中划线分割约定
 #[derive(Debug, Serialize, Deserialize, Clone)]
+/// 并且所有都使用中划线分割约定
 #[serde(rename_all = "kebab-case")]
 pub enum OperatorSource {
     SharedLibrary(String),
@@ -320,6 +345,7 @@ pub struct OperatorConfig {
     pub source: OperatorSource,
 
     /// 描述运行之前的构建命令
+    /// skip_serializing_if 表示 当值为None时，不序列化
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<String>,
 
@@ -328,7 +354,7 @@ pub struct OperatorConfig {
     pub run_config: NodeRunConfig,
 }
 
-/// Operator配置信息的包装-普通的Operaator
+/// Operator配置信息的包装-普通的Operator
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NormalOperatorDefinition {
     pub id: OperatorId,
@@ -355,15 +381,78 @@ pub struct MultipleOperatorDefinitions {
     pub operators: Vec<NormalOperatorDefinition>,
 }
 
+///
+/// ```yaml
+/// inputs:
+///     counter_1: cxx-node-c-api/counter
+///     tick:
+///         source: dataflow/timer/millis/100
+///         queue_size: 1000
+/// ```
+/// 其中
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, from = "InputDef", into = "InputDef")]
 pub struct Input {
     pub mapping: InputMapping,
     pub queue_size: Option<usize>,
 }
+/// 使用InputDef来兼容两种输入格式
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InputDef {
+    /// 1. 只有mapping
+    /// counter_1: cxx-node-c-api/counter
+    /// 匹配的 cxx-node-c-api/counter
+    MappingOnly(InputMapping),
+    /// 2. 有mapping和queue_size
+    ///     tick:
+    ///         source: dataflow/timer/millis/100
+    ///         queue_size: 1000
+    WithOptions {
+        /// 这里匹配的 source: dataflow/timer/millis/100
+        source: InputMapping,
+        /// 这里匹配的 queue_size: 1000
+        queue_size: Option<usize>,
+    },
+}
 
+/// 为InputDef实现From<Input>和From<InputDef>
+impl From<Input> for InputDef {
+    fn from(input: Input) -> Self {
+        match input {
+            Input {
+                mapping,
+                queue_size: None,
+            } => Self::MappingOnly(mapping),
+            Input {
+                mapping,
+                queue_size,
+            } => Self::WithOptions {
+                source: mapping,
+                queue_size,
+            },
+        }
+    }
+}
+
+impl From<InputDef> for Input {
+    fn from(value: InputDef) -> Self {
+        match value {
+            InputDef::MappingOnly(mapping) => Self {
+                mapping,
+                queue_size: None,
+            },
+            InputDef::WithOptions { source, queue_size } => Self {
+                mapping: source,
+                queue_size,
+            },
+        }
+    }
+}
+
+/// newType模式，创建 FormattedDuration类型专门用于格式化Duration
+/// 然后为其实现Display trait
 pub struct FormattedDuration(pub Duration);
-
 impl fmt::Display for FormattedDuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0.subsec_millis() == 0 {
@@ -374,43 +463,21 @@ impl fmt::Display for FormattedDuration {
     }
 }
 
-pub fn format_duration(interval: Duration) -> FormattedDuration {
-    FormattedDuration(interval)
-}
-
+/// 解析处理
+/// 1. dataflow/timer/millis/100
+/// 2. cxx-node-c-api/counter
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InputMapping {
-    Timer { interval: Duration },
+    /// dataflow/timer/millis/100
+    /// 表示的是内部实现的 timer 类型
+    /// 未来更多的类型可以在这里添加
+    Timer {
+        interval: Duration,
+    },
     User(UserInputMapping),
 }
-
-impl InputMapping {
-    pub fn source(&self) -> &NodeId {
-        static DATAFLOW_NODE_ID: OnceCell<NodeId> = OnceCell::new();
-
-        match self {
-            InputMapping::User(mapping) => &mapping.source,
-            InputMapping::Timer { .. } => {
-                DATAFLOW_NODE_ID.get_or_init(|| NodeId("dataflow".to_string()))
-            }
-        }
-    }
-}
-
-impl fmt::Display for InputMapping {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InputMapping::Timer { interval } => {
-                let duration = format_duration(*interval);
-                write!(f, "dataflow/timer/{duration}")
-            }
-            InputMapping::User(mapping) => {
-                write!(f, "{}/{}", mapping.source, mapping.output)
-            }
-        }
-    }
-}
-
+/// 手动实现序列化
+/// 直接序列化为str
 impl Serialize for InputMapping {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -419,26 +486,33 @@ impl Serialize for InputMapping {
         serializer.collect_str(self)
     }
 }
-
+/// 手动实现反序列化
 impl<'de> Deserialize<'de> for InputMapping {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
+        // 先反序列化为String
         let string = String::deserialize(deserializer)?;
+        // 解析 source/output 的形式
         let (source, output) = string
             .split_once('/')
             .ok_or_else(|| serde::de::Error::custom("input must start with `<source>/`"))?;
 
+        // 根据source的不同，解析为不同的InputMapping
         let deserialized = match source {
+            // 如果source 是dataflow，那么表示是内部实现的 output
+            // 我们进一步匹配处理 output
             "dataflow" => match output.split_once('/') {
                 Some(("timer", output)) => {
+                    // 匹配 unit/value 的形式
                     let (unit, value) = output.split_once('/').ok_or_else(|| {
                         serde::de::Error::custom(
                             "timer input must specify unit and value (e.g. `secs/5` or `millis/100`)",
                         )
                     })?;
-                    let interval = match unit {
+                    // 只接受 secs 和 millis
+                    let interval: Duration = match unit {
                         "secs" => {
                             let value = value.parse().map_err(|_| {
                                 serde::de::Error::custom(format!(
@@ -474,6 +548,7 @@ impl<'de> Deserialize<'de> for InputMapping {
                     ))
                 }
             },
+            // 否则是用户的 output
             _ => Self::User(UserInputMapping {
                 source: source.to_owned().into(),
                 output: output.to_owned().into(),
@@ -484,51 +559,56 @@ impl<'de> Deserialize<'de> for InputMapping {
     }
 }
 
+impl InputMapping {
+    /// 获取 InputMapping 的source
+    /// 内部的source是dataflow
+    /// 用户的source就是source字段
+    pub fn source(&self) -> &NodeId {
+        static DATAFLOW_NODE_ID: OnceCell<NodeId> = OnceCell::new();
+
+        match self {
+            InputMapping::User(mapping) => &mapping.source,
+            InputMapping::Timer { .. } => {
+                DATAFLOW_NODE_ID.get_or_init(|| NodeId("dataflow".to_string()))
+            }
+        }
+    }
+}
+
+/// 为 InputMapping实现Display trait
+impl fmt::Display for InputMapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InputMapping::Timer { interval } => {
+                let duration = FormattedDuration(*interval);
+                write!(f, "dataflow/timer/{duration}")
+            }
+            InputMapping::User(mapping) => {
+                write!(f, "{}/{}", mapping.source, mapping.output)
+            }
+        }
+    }
+}
+
+/// 用户的输入映射
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UserInputMapping {
     pub source: NodeId,
     pub output: DataId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum InputDef {
-    MappingOnly(InputMapping),
-    WithOptions {
-        source: InputMapping,
-        queue_size: Option<usize>,
-    },
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
 
-impl From<Input> for InputDef {
-    fn from(input: Input) -> Self {
-        match input {
-            Input {
-                mapping,
-                queue_size: None,
-            } => Self::MappingOnly(mapping),
-            Input {
-                mapping,
-                queue_size,
-            } => Self::WithOptions {
-                source: mapping,
-                queue_size,
-            },
-        }
-    }
-}
-
-impl From<InputDef> for Input {
-    fn from(value: InputDef) -> Self {
-        match value {
-            InputDef::MappingOnly(mapping) => Self {
-                mapping,
-                queue_size: None,
-            },
-            InputDef::WithOptions { source, queue_size } => Self {
-                mapping: source,
-                queue_size,
-            },
-        }
+    #[test]
+    fn test_create() {
+        let cargo_path = env!("CARGO_MANIFEST_DIR");
+        println!("{:?}", cargo_path);
+        let pathbuf = PathBuf::from(cargo_path.to_string() + "\\example.yaml");
+        println!("{:?}", pathbuf);
+        let des = Descriptor::blocking_read(&pathbuf).unwrap();
+        println!("{:?}", des);
     }
 }

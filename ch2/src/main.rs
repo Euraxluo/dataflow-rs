@@ -22,9 +22,11 @@ enum Graph {
         /// yaml file path
         #[arg(short, long, value_name = "FILE")]
         file: PathBuf,
-        #[clap(short,long, action)]
+        /// 这里使用 conflicts_with表示和open互斥
+        #[clap(short,long, action,conflicts_with = "open")]
         mermaid: bool,
-        #[clap(short,long, action)]
+        /// 这里使用 conflicts_with表示和mermaid互斥
+        #[clap(short,long, action,conflicts_with = "mermaid")]
         open: bool,
     },
 }
