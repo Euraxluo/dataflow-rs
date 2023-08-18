@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+</head>
+
+<body>
+    <div class="mermaid">
+        flowchart TB
+subgraph python_source_image
+  python_source_image/python_source_image[python_source_image]
+end
+subgraph python_object_detection
+  python_object_detection/python_object_detection[python_object_detection]
+end
+subgraph python_plot
+  python_plot/python_plot[/python_plot\]
+end
+subgraph cxx-node-rust-api
+  cxx-node-rust-api/cxx-node-rust-api[cxx-node-rust-api]
+end
+subgraph cxx-node-c-api
+  cxx-node-c-api/cxx-node-c-api[cxx-node-c-api]
+end
+subgraph runtime-node-1
+  runtime-node-1/operator-rust-api[operator-rust-api]
+end
+subgraph runtime-node-2
+  runtime-node-2/operator-c-api[operator-c-api]
+end
+subgraph rust-node
+  rust-node/rust-node[rust-node]
+end
+subgraph runtime-node
+  runtime-node/rust-operator[rust-operator]
+end
+subgraph rust-sink
+  rust-sink/rust-sink[/rust-sink\]
+end
+subgraph ___dataflow___ [dataflow]
+  subgraph ___timer_timer___ [timer]
+    dataflow/timer/millis/10[\millis/10/]
+    dataflow/timer/millis/100[\millis/100/]
+    dataflow/timer/millis/300[\millis/300/]
+  end
+end
+  dataflow/timer/millis/100 -- tick --> python_source_image/python_source_image
+  python_source_image/python_source_image -- image --> python_object_detection/python_object_detection
+  python_object_detection/python_object_detection -- bbox --> python_plot/python_plot
+  python_source_image/python_source_image -- image --> python_plot/python_plot
+  dataflow/timer/millis/300 -- tick --> cxx-node-rust-api/cxx-node-rust-api
+  dataflow/timer/millis/300 -- tick --> cxx-node-c-api/cxx-node-c-api
+  cxx-node-c-api/cxx-node-c-api -- counter as counter_1 --> runtime-node-1/operator-rust-api
+  cxx-node-rust-api/cxx-node-rust-api -- counter as counter_2 --> runtime-node-1/operator-rust-api
+  runtime-node-1/operator-rust-api -- status as op_status --> runtime-node-2/operator-c-api
+  dataflow/timer/millis/10 -- tick --> rust-node/rust-node
+  rust-node/rust-node -- random --> runtime-node/rust-operator
+  dataflow/timer/millis/100 -- tick --> runtime-node/rust-operator
+  runtime-node/rust-operator -- status as message --> rust-sink/rust-sink
+
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+    </script>
+</body>
+
+</html>
