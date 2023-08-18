@@ -803,7 +803,7 @@ end
     outputs:
       - bbox
 ```
-主要是使用untaged实现的
+主要是使用untagged实现的
 ```rust
 /// 节点的类型，这里是个枚举，三选一
 #[derive(Debug, Clone, Serialize, Deserialize)]
