@@ -115,11 +115,12 @@ impl Descriptor {
             })
             .collect();
 
+        let mut nodes = self.nodes.clone();
         // 处理所有的节点
-        for mut node in self.nodes.clone().into_iter() {
+        for mut node in nodes.iter_mut() {
             // 将单op节点转为多op节点
             // 只需要转换一下kind即可
-            node.kind = if let NodeKind::Operator(operator) = node.kind {
+            node.kind = if let NodeKind::Operator(operator) = node.kind.clone() {
                 // 如果是单个操作符节点，就将其转为多个操作符节点
                 NodeKind::Operators(MultipleOperatorDefinitions {
                     operators: vec![NormalOperatorDefinition {
@@ -129,14 +130,14 @@ impl Descriptor {
                 })
             } else {
                 // 如果不是操作符节点，就直接返回
-                node.kind
+                node.kind.clone()
             };
             // 将节点的部署信息设置为默认的部署信息
             // 如果当前节点没有部署信息，就去获取description的部署信息
             node.deploy = {
                 // 这里我们只处理了machine
                 let default_machine = self.deploy.machine.clone().unwrap_or_default();
-                let machine = match node.deploy.machine {
+                let machine = match node.deploy.machine.clone() {
                     Some(m) => m,
                     None => default_machine.to_owned(),
                 };
@@ -174,8 +175,7 @@ impl Descriptor {
                 }
             }
         }
-
-        self.nodes.clone()
+        nodes.clone()
     }
 
     /// 从文件中读取描述文件
@@ -610,5 +610,8 @@ mod tests {
         println!("{:?}", pathbuf);
         let des = Descriptor::blocking_read(&pathbuf).unwrap();
         println!("{:?}", des);
+        println!("\n\n\n");
+        println!("{:#?}", des.resolve_node_defaults());
+        println!("\n\n\n");
     }
 }
