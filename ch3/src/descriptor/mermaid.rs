@@ -1,7 +1,6 @@
-use crate::descriptor::Node;
-use crate::descriptor::{
-    DataId, FormattedDuration, Input, InputMapping, MultipleOperatorDefinitions, NodeId, NodeKind,
-    NormalOperatorDefinition, UserInputMapping,
+use super::descriptor::{
+    DataId, FormattedDuration, Input, InputMapping, NodeId, NormalNode, NormalOperatorDefinition,
+    UserInputMapping,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -10,7 +9,7 @@ use std::{
 };
 
 /// 将所有节点转为mermaid图字符串
-pub fn visualize_nodes(nodes: &[Node]) -> String {
+pub(crate) fn visualize_nodes(nodes: &[NormalNode]) -> String {
     let mut flowchart = "flowchart TB\n".to_owned();
     let mut all_nodes = HashMap::new();
 
@@ -42,20 +41,14 @@ pub fn visualize_nodes(nodes: &[Node]) -> String {
 }
 
 /// 收集dataflow中的timer
-pub fn collect_dataflow_timers(nodes: &[Node]) -> BTreeSet<Duration> {
+fn collect_dataflow_timers(nodes: &[NormalNode]) -> BTreeSet<Duration> {
     let mut dataflow_timers = BTreeSet::new();
     for node in nodes {
-        match &node.kind {
-            NodeKind::Operators(node) => {
-                for operator in &node.operators {
-                    collect_dataflow_nodes(
-                        operator.config.run_config.inputs.values(),
-                        &mut dataflow_timers,
-                    );
-                }
-            }
-
-            NodeKind::Operator(_) => todo!(),
+        for operator in &node.kind.operators {
+            collect_dataflow_nodes(
+                operator.config.run_config.inputs.values(),
+                &mut dataflow_timers,
+            );
         }
     }
     dataflow_timers
@@ -76,15 +69,9 @@ fn collect_dataflow_nodes(
     }
 }
 
-// 可视化节点，主要是operators的可视化，将其转为字符串
-fn visualize_node(node: &Node, flowchart: &mut String) {
-    let node_id = &node.id;
-    match &node.kind {
-        NodeKind::Operators(MultipleOperatorDefinitions { operators, .. }) => {
-            visualize_operators(node_id, operators, flowchart)
-        }
-        NodeKind::Operator(_) => todo!(),
-    }
+/// 可视化节点，主要是operators的可视化，将其转为字符串
+fn visualize_node(node: &NormalNode, flowchart: &mut String) {
+    visualize_operators(&node.id, &node.kind.operators, flowchart);
 }
 
 /// 可视化operators
@@ -111,20 +98,21 @@ fn visualize_operators(
     flowchart.push_str("end\n");
 }
 
-fn visualize_node_inputs(node: &Node, flowchart: &mut String, nodes: &HashMap<&NodeId, &Node>) {
+fn visualize_node_inputs(
+    node: &NormalNode,
+    flowchart: &mut String,
+    nodes: &HashMap<&NodeId, &NormalNode>,
+) {
     let node_id = &node.id;
-    match &node.kind {
-        NodeKind::Operators(MultipleOperatorDefinitions { operators, .. }) => {
-            for operator in operators {
-                visualize_operator_inputs(
-                    &format!("{node_id}/{}", operator.id),
-                    &operator.config.run_config.inputs,
-                    flowchart,
-                    nodes,
-                )
-            }
-        }
-        NodeKind::Operator(_) => todo!(),
+    // 对于每个节点的每个operator
+    // 将其输入可视化
+    for operator in node.kind.operators.iter() {
+        visualize_operator_inputs(
+            &format!("{node_id}/{}", operator.id),
+            &operator.config.run_config.inputs,
+            flowchart,
+            nodes,
+        )
     }
 }
 
@@ -132,17 +120,16 @@ fn visualize_operator_inputs(
     target: &str,
     inputs: &BTreeMap<DataId, Input>,
     flowchart: &mut String,
-    nodes: &HashMap<&NodeId, &Node>,
+    nodes: &HashMap<&NodeId, &NormalNode>,
 ) {
     for (input_id, input) in inputs {
-        println!("input_id: {:#?}", input_id);
-        println!("input: {:#?}", input);
         match &input.mapping {
             // 对于时间类型的输入，将timmer 作为 source
             mapping @ InputMapping::Timer { .. } => {
                 writeln!(flowchart, "  {} -- {input_id} --> {target}", mapping).unwrap();
             }
             InputMapping::User(mapping) => {
+                // 自定义的mapping直接调用此函数
                 visualize_user_mapping(mapping, target, nodes, input_id, flowchart)
             }
         }
@@ -152,35 +139,33 @@ fn visualize_operator_inputs(
 fn visualize_user_mapping(
     mapping: &UserInputMapping,
     target: &str,
-    nodes: &HashMap<&NodeId, &Node>,
+    nodes: &HashMap<&NodeId, &NormalNode>,
     input_id: &DataId,
     flowchart: &mut String,
 ) {
     let UserInputMapping { source, output } = mapping;
     let mut source_found = false;
     if let Some(source_node) = nodes.get(source) {
-        match &source_node.kind {
-            NodeKind::Operators(MultipleOperatorDefinitions { operators, .. }) => {
-                let (operator_id, output) = output.split_once('/').unwrap_or(("", output));
-                if let Some(operator) = operators
-                    .iter()
-                    .find(|o| o.id.to_string().as_str() == operator_id)
-                {
-                    if operator.config.run_config.outputs.contains(output) {
-                        let data = if output == input_id.as_str() {
-                            output.to_string()
-                        } else {
-                            format!("{output} as {input_id}")
-                        };
-                        writeln!(flowchart, "  {source}/{operator_id} -- {data} --> {target}")
-                            .unwrap();
-                        source_found = true;
-                    }
-                }
+        // 如果source是一个节点，就连接source和target
+        let (operator_id, output) = output.split_once('/').unwrap_or(("", output));
+        if let Some(operator) = source_node
+            .kind
+            .operators
+            .iter()
+            .find(|o| o.id.to_string().as_str() == operator_id)
+        {
+            if operator.config.run_config.outputs.contains(output) {
+                let data = if output == input_id.as_str() {
+                    output.to_string()
+                } else {
+                    format!("{output} as {input_id}")
+                };
+                writeln!(flowchart, "  {source}/{operator_id} -- {data} --> {target}").unwrap();
+                source_found = true;
             }
-            _ => todo!(),
         }
     }
+    // 如果，没有找到source，就将其作为missing
     if !source_found {
         writeln!(flowchart, "  missing>missing] -- {input_id} --> {target}").unwrap();
     }

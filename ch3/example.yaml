@@ -26,7 +26,6 @@ nodes:
     inputs:
       image: python_source_image/image
       bbox: python_object_detection/bbox
-  # cpp node
   - id: cxx-node-rust-api
     shell: build/node_rust_api
     inputs:
@@ -62,7 +61,6 @@ nodes:
           op_status: runtime-node-1/operator-rust-api/status
         outputs:
           - half-status
-  # rust node
   - id: rust-node
     build: cargo build -p target
     shell: ../../target/debug/so

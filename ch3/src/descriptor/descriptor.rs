@@ -1,4 +1,3 @@
-use crate::visualize::{self};
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -111,26 +110,29 @@ impl Descriptor {
     }
 
     /// 将单op节点转为多op节点,只需要转换一下kind即可
-    fn resolve_node_to_operators(&self, node: Node) -> NodeKind {
-        if let NodeKind::Operator(operator) = node.kind.clone() {
-            // 如果是单个操作符节点，就将其转为多个操作符节点
-            NodeKind::Operators(MultipleOperatorDefinitions {
-                operators: vec![NormalOperatorDefinition {
-                    id: operator
-                        .id
-                        .unwrap_or_else(|| OperatorId(node.id.to_string())),
-                    config: operator.config,
-                }],
-            })
-        } else {
-            // 如果不是操作符节点，就直接返回
-            node.kind.clone()
+    fn resolve_node_to_operators(&self, node: Node) -> MultipleOperatorDefinitions {
+        match node.kind {
+            NodeKind::Operators(operators) => {
+                // 如果不是操作符节点，就直接返回
+                operators
+            }
+            NodeKind::Operator(operator) => {
+                // 如果是单个操作符节点，就将其转为多个操作符节点
+                MultipleOperatorDefinitions {
+                    operators: vec![NormalOperatorDefinition {
+                        id: operator
+                            .id
+                            .unwrap_or_else(|| OperatorId(node.id.to_string())),
+                        config: operator.config,
+                    }],
+                }
+            }
         }
     }
 
     /// 处理每个op的input 映射，将索引的单op型节点，转化一下
     /// 使用 NodeKind::Operator 所以需要先调用
-    pub fn resolve_operator_inputs_output(&self) -> Vec<Node> {
+    fn resolve_operator_inputs_output(&self) -> Vec<Node> {
         let operator_nodes: Vec<_> = self
             .nodes
             .iter()
@@ -155,15 +157,19 @@ impl Descriptor {
             };
             // 处理每个节点的每个 输入映射
             // 对于所有的user类型的输入映射，都需要将其输出(即mapping的output)转为和输出相同的格式，转为 op_name/output
-            for mapping in input_mappings
+            for input_mapping in input_mappings
                 .into_iter()
                 .filter_map(|i| match &mut i.mapping {
                     InputMapping::Timer { .. } => None,
                     InputMapping::User(m) => Some(m),
                 })
             {
-                if operator_nodes.contains(&&mapping.source) {
-                    mapping.output = DataId::from(format!("{}/{}", mapping.source, mapping.output));
+                // 如果 input_mapping 的 source 是一个单op节点
+                // 就修改这个 input_mapping 的 output，将其设置为 output => node_id/output
+                // 而 source的话还是 node_id
+                if operator_nodes.contains(&&input_mapping.source) {
+                    input_mapping.output =
+                        DataId::from(format!("{}/{}", input_mapping.source, input_mapping.output));
                 }
             }
         }
@@ -173,16 +179,26 @@ impl Descriptor {
     /// 处理节点的一些默认值
     /// 2. 将节点的部署信息设置为默认的部署信息,主要是需要处理需要将节点的默认值和描述的默认值合并
     /// 3. 处理每个节点及OP，每个op的输出，将输出转为和输出相同的格式，转为 op_name/output
-    pub fn resolve_node_defaults(&self) -> Vec<Node> {
-        let mut nodes = self.resolve_operator_inputs_output();
-        for mut node in nodes.iter_mut() {
-            // 处理节点的deploy的默认值
-            node.deploy = self.resolve_node_deploy_defaults(node.clone());
-            // 将node 从 单op节点转为多op节点
-            node.kind = self.resolve_node_to_operators(node.clone());
-            // 处理节点的input，将索引的单op型节点，转化一下
+    pub(crate) fn resolve_node_defaults(&self) -> Vec<NormalNode> {
+        let mut resolved = vec![];
+        // 处理节点的input，将索引的单op型节点，转化一下
+        // 直接在node上存储一下
+        let nodes = self.resolve_operator_inputs_output();
+        for node in nodes.clone() {
+            let resolve_kind = self.resolve_node_to_operators(node.clone());
+            let resolve_deploy = self.resolve_node_deploy_defaults(node.clone());
+            resolved.push(NormalNode {
+                id: node.id,
+                name: node.name,
+                description: node.description,
+                env: node.env,
+                // 处理节点的deploy的默认值
+                deploy: resolve_deploy,
+                // 将node 从 单op节点转为多op节点
+                kind: resolve_kind,
+            });
         }
-        nodes
+        resolved
     }
 
     /// 从文件中读取描述文件
@@ -195,14 +211,14 @@ impl Descriptor {
     /// 封装了一下反序列化函数，输入是一个字节数组，输出是一个Descriptor
     /// 这里使用了serde_yaml::from_slice
     /// 所以可以修改该函数修改配置文件类型
-    pub fn parse(buf: Vec<u8>) -> Result<Descriptor> {
+    fn parse(buf: Vec<u8>) -> Result<Descriptor> {
         serde_yaml::from_slice(&buf).context("failed to parse given descriptor")
     }
 
     /// 可视化当前dataflow yaml 定义文件，作为mermaid图
     pub fn visualize_as_mermaid(&self) -> Result<String> {
         let resolved = self.resolve_node_defaults();
-        let flowchart = visualize::mermaid::visualize_nodes(&resolved);
+        let flowchart = crate::descriptor::mermaid::visualize_nodes(&resolved);
 
         Ok(flowchart)
     }
@@ -271,6 +287,25 @@ pub struct Node {
     /// 嵌入节点类型枚举
     #[serde(flatten)]
     pub kind: NodeKind,
+}
+
+/// dataflow的工作节点处理后的结构体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NormalNode {
+    /// 节点ID
+    pub id: NodeId,
+    /// 节点名称
+    pub name: Option<String>,
+    /// 节点描述
+    pub description: Option<String>,
+    /// 环境变量设置
+    pub env: Option<BTreeMap<String, EnvValue>>,
+    /// 部署信息
+    #[serde(default)]
+    pub deploy: Deploy,
+    /// 运行节点列表
+    #[serde(flatten)]
+    pub kind: MultipleOperatorDefinitions,
 }
 
 /// 节点的类型，这里是个枚举，三选一

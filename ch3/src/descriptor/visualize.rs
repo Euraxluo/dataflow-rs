@@ -1,14 +1,17 @@
+use super::descriptor::Descriptor;
 use anyhow::{Context, Result};
-use std::{fs::File, io::Write, path::Path};
-pub mod mermaid;
-use crate::descriptor::Descriptor;
+use std::{
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use webbrowser;
 
 /// HTML template for rendering mermaid graphs.
 const MERMAID_TEMPLATE: &str = include_str!("mermaid-template.html");
 
 /// Create a visualization of the given dataflow file.
-pub fn create(dataflow: std::path::PathBuf, mermaid: bool, open: bool) -> Result<()> {
+pub fn visualize(dataflow: PathBuf, mermaid: bool, open: bool) -> Result<()> {
     if mermaid {
         // 生成mermaid图
         let visualized = visualize_as_mermaid(&dataflow)?;
@@ -63,13 +66,13 @@ pub fn create(dataflow: std::path::PathBuf, mermaid: bool, open: bool) -> Result
 }
 
 /// 根据dataflow文件生成包含 mermaid图 的html
-pub fn visualize_as_html(dataflow: &Path) -> Result<String> {
+fn visualize_as_html(dataflow: &Path) -> Result<String> {
     let mermaid = visualize_as_mermaid(dataflow)?;
     Ok(MERMAID_TEMPLATE.replacen("____insert____", &mermaid, 1))
 }
 
 /// 根据dataflow文件生成mermaid图
-pub fn visualize_as_mermaid(dataflow: &Path) -> Result<String> {
+fn visualize_as_mermaid(dataflow: &Path) -> Result<String> {
     let descriptor = Descriptor::blocking_read(dataflow)
         .with_context(|| format!("failed to read dataflow at `{}`", dataflow.display()))?;
 
