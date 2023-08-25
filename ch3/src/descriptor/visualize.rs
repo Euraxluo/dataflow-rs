@@ -1,5 +1,6 @@
 use super::descriptor::Descriptor;
 use anyhow::{Context, Result};
+use log::debug;
 use std::{
     fs::File,
     io::Write,
@@ -75,7 +76,7 @@ fn visualize_as_html(dataflow: &Path) -> Result<String> {
 fn visualize_as_mermaid(dataflow: &Path) -> Result<String> {
     let descriptor = Descriptor::blocking_read(dataflow)
         .with_context(|| format!("failed to read dataflow at `{}`", dataflow.display()))?;
-
+    debug!("descriptor: {:#?}", descriptor);
     let visualized = descriptor
         .visualize_as_mermaid()
         .context("failed to visualize descriptor")?;

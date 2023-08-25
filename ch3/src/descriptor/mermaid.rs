@@ -3,9 +3,8 @@ use super::descriptor::{
     UserInputMapping,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     fmt::Write as _,
-    time::Duration,
 };
 
 /// 将所有节点转为mermaid图字符串
@@ -20,7 +19,7 @@ pub(crate) fn visualize_nodes(nodes: &[NormalNode]) -> String {
     }
 
     // 处理dataflow中的timer
-    let dataflow_timers = collect_dataflow_timers(nodes);
+    let dataflow_timers = NormalNode::collect_timers_from_nodes(nodes);
     if !dataflow_timers.is_empty() {
         writeln!(flowchart, "subgraph ___dataflow___ [dataflow]").unwrap();
         writeln!(flowchart, "  subgraph ___timer_timer___ [timer]").unwrap();
@@ -38,35 +37,6 @@ pub(crate) fn visualize_nodes(nodes: &[NormalNode]) -> String {
     }
 
     flowchart
-}
-
-/// 收集dataflow中的timer
-fn collect_dataflow_timers(nodes: &[NormalNode]) -> BTreeSet<Duration> {
-    let mut dataflow_timers = BTreeSet::new();
-    for node in nodes {
-        for operator in &node.kind.operators {
-            collect_dataflow_nodes(
-                operator.config.run_config.inputs.values(),
-                &mut dataflow_timers,
-            );
-        }
-    }
-    dataflow_timers
-}
-
-/// 将inputs中的timer收集起来，放入到dataflow_timers
-fn collect_dataflow_nodes(
-    values: std::collections::btree_map::Values<DataId, Input>,
-    dataflow_timers: &mut BTreeSet<Duration>,
-) {
-    for input in values {
-        match &input.mapping {
-            InputMapping::User(_) => {}
-            InputMapping::Timer { interval } => {
-                dataflow_timers.insert(*interval);
-            }
-        }
-    }
 }
 
 /// 可视化节点，主要是operators的可视化，将其转为字符串
@@ -98,6 +68,8 @@ fn visualize_operators(
     flowchart.push_str("end\n");
 }
 
+/// 可视化节点的输入
+/// 每个节点可能有多个operator
 fn visualize_node_inputs(
     node: &NormalNode,
     flowchart: &mut String,
@@ -116,6 +88,7 @@ fn visualize_node_inputs(
     }
 }
 
+/// 可视化operator的输入
 fn visualize_operator_inputs(
     target: &str,
     inputs: &BTreeMap<DataId, Input>,
@@ -136,6 +109,7 @@ fn visualize_operator_inputs(
     }
 }
 
+/// 可视化自定义的input mapping
 fn visualize_user_mapping(
     mapping: &UserInputMapping,
     target: &str,
@@ -148,13 +122,17 @@ fn visualize_user_mapping(
     if let Some(source_node) = nodes.get(source) {
         // 如果source是一个节点，就连接source和target
         let (operator_id, output) = output.split_once('/').unwrap_or(("", output));
+        // 找到source节点中的指定的那个operator
         if let Some(operator) = source_node
             .kind
             .operators
             .iter()
             .find(|o| o.id.to_string().as_str() == operator_id)
         {
+            // 如果operator中有那个output data
+            // 那么就将其连接到target
             if operator.config.run_config.outputs.contains(output) {
+                // 如果名字不一样还要设置一个as
                 let data = if output == input_id.as_str() {
                     output.to_string()
                 } else {

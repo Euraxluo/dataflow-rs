@@ -1,0 +1,16 @@
+version: 1.0
+deploy:
+  endpoints: 
+    - tcp/127.0.0.1:7448
+    - tcp/127.0.0.1:7447
+  mode: peer
+nodes:
+  # cpp node
+  - id: python_source_image
+    shell: demo.yaml -h
+    inputs:
+      tick:
+        source: dataflow/timer/millis/100
+        queue_size: 1000
+    outputs:
+      - image

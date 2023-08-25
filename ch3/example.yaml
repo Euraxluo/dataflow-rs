@@ -1,13 +1,12 @@
 version: 1.0
 deploy:
-  machine: worker_node_id
+  endpoints: 
+    - tcp/127.0.0.1:7448
+    - tcp/127.0.0.1:7447
+  mode: peer
 nodes:
   # cpp node
   - id: python_source_image
-    deploy:
-      machine: worker_node_id
-      min_workers: 1
-      max_wowkers: 2
     shell: ./python_source_node.py
     inputs:
       tick:
@@ -41,12 +40,6 @@ nodes:
   - id: runtime-node-1
     operators:
       - id: operator-rust-api
-        deploy:
-          cpu: 1.1
-          gpu: 1.2
-          memory: 100.3
-          min_workers: 1
-          max_wowkers: 2
         shared-library: build/operator_rust_api
         inputs:
           counter_1: cxx-node-c-api/counter

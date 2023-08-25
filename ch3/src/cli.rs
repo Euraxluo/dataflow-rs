@@ -18,11 +18,13 @@ pub struct Args {
 ///dataflow command line tool
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// 该命令是查看整个dataflow集群的数据流图的
+    /// 应该包括静态的和动态的
     /// Print Graphviz representation of the given descriptor file or Show dataflow file as mermaid graph. Use --open to open browser.
     Show {
-        /// yaml file path
+        /// yaml file dataflow path
         #[arg(short, long, value_name = "FILE")]
-        file: PathBuf,
+        dataflow: PathBuf,
         /// 输出 mermaid 内容和 open互斥
         #[clap(short, long, action, conflicts_with = "open")]
         mermaid: bool,
@@ -30,15 +32,22 @@ pub enum Command {
         #[clap(short, long, action, conflicts_with = "mermaid")]
         open: bool,
     },
-    /// Start the given dataflow path. Attach a name to the running dataflow by using --name.
-    Start {
+    /// 该命令会启动一个dataflow
+    /// Start the given dataflow path.
+    Launch {
+        /// yaml description file path
+        #[arg(short, long, value_name = "FILE")]
         dataflow: PathBuf,
-        #[clap(long)]
-        name: Option<String>,
-        #[clap(long, action)]
-        attach: bool,
-        #[clap(long, action)]
-        hot_reload: bool,
+    },
+    /// 该命令会启动指定dataflow中的一个节点
+    /// Start one Node of a given dataflow path and given NodeId.
+    Start {
+        /// yaml description file path
+        #[clap(short, long, value_name = "FILE")]
+        dataflow: Option<PathBuf>,
+        /// start a node
+        #[arg(short, long, value_name = "NodeID")]
+        node: String,
     },
 }
 
@@ -51,14 +60,12 @@ impl Args {
                 Ok(val) => val,
                 Err(_) => "info".to_string(),
             };
-            println!("RUST_ENV_LOG: {}", level_env);
             let level_verbose = match self.verbose {
                 0 => "ERROR",
                 1 => "INFO",
                 2 => "Debug",
                 _ => "Trace",
             };
-            println!("RUST_VERBOSE_LOG: {}", level_verbose);
             // Converts a string to the corresponding log-level enumeration
             let level = if let (Ok(level1), Ok(level2)) =
                 (Level::from_str(&level_env), Level::from_str(&level_verbose))
@@ -72,7 +79,6 @@ impl Args {
             } else {
                 level_env
             };
-            println!("RUST_LOG: {}", level);
             level
         }))
         .init();

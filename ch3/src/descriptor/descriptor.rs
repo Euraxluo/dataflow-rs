@@ -1,23 +1,43 @@
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with_expand_env::with_expand_envs;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, BTreeSet},
     convert::Infallible,
-    fmt,
-    path::Path,
+    env, fmt,
+    path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
+
+use super::validate::validate_dataflow;
 
 /// 用于从String创建自定义类型的宏
 macro_rules! custom_type_of_String {
     ($vis:vis $name:ident) => {
         #[doc = concat!("The `", stringify!($name), "` is an alias for String.")]
-        #[derive(Debug, Clone,Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
         $vis struct $name(String);
+
+        impl Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                serializer.serialize_str(&self.0)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                String::deserialize(deserializer).map($name)
+            }
+        }
 
         impl From<$name> for String {
             fn from(id: $name) -> Self {
@@ -93,18 +113,66 @@ pub struct Descriptor {
 
 /// 实现一些函数
 impl Descriptor {
+    /// 处理节点的一些默认值
+    /// 2. 将节点的部署信息设置为默认的部署信息,主要是需要处理需要将节点的默认值和描述的默认值合并
+    /// 3. 处理每个节点及OP，每个op的输出，将输出转为和输出相同的格式，转为 op_name/output
+    pub(crate) fn resolve_node_defaults(&self) -> Vec<NormalNode> {
+        let mut resolved = vec![];
+        // 处理节点的input，将索引的单op型节点，转化一下
+        // 直接在node上存储一下
+        let nodes = self.resolve_operator_inputs_output();
+        for node in nodes.clone() {
+            let resolve_kind = self.resolve_node_to_operators(node.clone());
+            let resolve_deploy = self.resolve_node_deploy_defaults(node.clone());
+            resolved.push(NormalNode {
+                id: node.id,
+                name: node.name,
+                description: node.description,
+                env: node.env,
+                // 处理节点的deploy的默认值
+                deploy: resolve_deploy,
+                // 将node 从 单op节点转为多op节点
+                kind: resolve_kind,
+            });
+        }
+        resolved
+    }
+
+    /// 从文件中读取描述文件
+    /// 然后反序列化
+    pub(crate) fn blocking_read(path: &Path) -> Result<Descriptor> {
+        let buf = std::fs::read(path).context("failed to open given file")?;
+        Descriptor::parse(buf)
+    }
+
+    /// 检查当前的yaml文件是否合法
+    pub(crate) fn validate(&self, working_dir: &Path) -> Result<()> {
+        validate_dataflow(self, &working_dir).context("failed to validate yaml")?;
+        Ok(())
+    }
+
     /// 将节点的部署信息设置为默认的部署信息
     /// 如果当前节点没有部署信息，就去获取description的部署信息
     fn resolve_node_deploy_defaults(&self, node: Node) -> Deploy {
         // 处理machine
-        let default_machine = self.deploy.machine.clone().unwrap_or_default();
-        let machine = match node.deploy.machine {
+        let default_endpoint = self.deploy.endpoints.clone().unwrap_or_default();
+        let endpoint = match node.deploy.endpoints {
             Some(m) => m,
-            None => default_machine.to_owned(),
+            None => default_endpoint.to_owned(),
+        };
+        let default_log = self
+            .deploy
+            .log
+            .clone()
+            .unwrap_or(env::temp_dir().join("log.txt"));
+        let log = match node.deploy.log {
+            Some(m) => m,
+            None => default_log.to_owned(),
         };
         // 重新设置deploy的
         Deploy {
-            machine: Some(machine),
+            endpoints: Some(endpoint),
+            log: Some(log),
             ..node.deploy
         }
     }
@@ -176,38 +244,6 @@ impl Descriptor {
         nodes
     }
 
-    /// 处理节点的一些默认值
-    /// 2. 将节点的部署信息设置为默认的部署信息,主要是需要处理需要将节点的默认值和描述的默认值合并
-    /// 3. 处理每个节点及OP，每个op的输出，将输出转为和输出相同的格式，转为 op_name/output
-    pub(crate) fn resolve_node_defaults(&self) -> Vec<NormalNode> {
-        let mut resolved = vec![];
-        // 处理节点的input，将索引的单op型节点，转化一下
-        // 直接在node上存储一下
-        let nodes = self.resolve_operator_inputs_output();
-        for node in nodes.clone() {
-            let resolve_kind = self.resolve_node_to_operators(node.clone());
-            let resolve_deploy = self.resolve_node_deploy_defaults(node.clone());
-            resolved.push(NormalNode {
-                id: node.id,
-                name: node.name,
-                description: node.description,
-                env: node.env,
-                // 处理节点的deploy的默认值
-                deploy: resolve_deploy,
-                // 将node 从 单op节点转为多op节点
-                kind: resolve_kind,
-            });
-        }
-        resolved
-    }
-
-    /// 从文件中读取描述文件
-    /// 然后反序列化
-    pub fn blocking_read(path: &Path) -> Result<Descriptor> {
-        let buf = std::fs::read(path).context("failed to open given file")?;
-        Descriptor::parse(buf)
-    }
-
     /// 封装了一下反序列化函数，输入是一个字节数组，输出是一个Descriptor
     /// 这里使用了serde_yaml::from_slice
     /// 所以可以修改该函数修改配置文件类型
@@ -259,15 +295,15 @@ impl fmt::Display for EnvValue {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deploy {
-    /// 节点部署的机器
-    pub machine: Option<WorkId>,
-    /// 部署时需要限制的资源
-    pub cpu: Option<f64>,
-    pub gpu: Option<f64>,
-    pub memory: Option<i64>,
-    /// 并行数                                                                                                                                                                                                                                                                                                                                                                                                                     
-    pub min_workers: Option<i64>,
-    pub max_wowkers: Option<i64>,
+    /// 通信端点
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<Vec<String>>,
+    /// 通信模式
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// 日志文件地址
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<PathBuf>,
 }
 
 /// dataflow的工作节点申明结构体
@@ -276,10 +312,13 @@ pub struct Node {
     /// 节点ID
     pub id: NodeId,
     /// 节点名称
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// 节点描述
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// 环境变量设置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<BTreeMap<String, EnvValue>>,
     /// 部署信息
     #[serde(default)]
@@ -295,10 +334,13 @@ pub struct NormalNode {
     /// 节点ID
     pub id: NodeId,
     /// 节点名称
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// 节点描述
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// 环境变量设置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<BTreeMap<String, EnvValue>>,
     /// 部署信息
     #[serde(default)]
@@ -306,6 +348,59 @@ pub struct NormalNode {
     /// 运行节点列表
     #[serde(flatten)]
     pub kind: MultipleOperatorDefinitions,
+}
+
+impl NormalNode {
+    /// 收集normalNode中的timer
+    pub(crate) fn collect_node_timer(&self) -> BTreeSet<Duration> {
+        let mut dataflow_timers = BTreeSet::new();
+        for operator in &self.kind.operators {
+            dataflow_timers.extend(operator.config.run_config.collect_input_timers());
+        }
+        dataflow_timers
+    }
+    /// 收集normalNode中的timer input
+    pub(crate) fn collect_node_timer_input(&self) -> BTreeMap<DataId, Input> {
+        let mut dataflow_timers = BTreeMap::new();
+        for operator in &self.kind.operators {
+            dataflow_timers.extend(operator.config.run_config.collect_timer_inputs());
+        }
+        dataflow_timers
+    }
+
+    /// 收集normalNode中的input映射
+    pub(crate) fn collect_node_input(&self) -> BTreeMap<DataId, Input> {
+        let mut dataflow_inputs = BTreeMap::new();
+        for operator in &self.kind.operators {
+            dataflow_inputs.extend(operator.config.run_config.inputs.clone());
+        }
+        dataflow_inputs
+    }
+    /// 计算每个DataId 对应的 queueSize
+    pub(crate) fn collect_node_queue_size(&self) -> BTreeMap<DataId, usize> {
+        let mut dataflow_queue_size = BTreeMap::new();
+        for (data_id, input) in self.collect_node_input() {
+            dataflow_queue_size.insert(data_id.clone(), input.queue_size);
+        }
+        dataflow_queue_size
+    }
+
+    /// 添加一个关联函数处理列表
+    pub(crate) fn collect_timers_from_nodes(nodes: &[NormalNode]) -> BTreeSet<Duration> {
+        let mut nodes_timer = BTreeSet::new();
+        for node in nodes {
+            nodes_timer.extend(node.collect_node_timer());
+        }
+        nodes_timer
+    }
+    /// 添加一个关联函数处理列表
+    pub(crate) fn collect_timer_input_from_nodes(nodes: &[NormalNode]) -> BTreeMap<DataId, Input> {
+        let mut nodes_timer_input = BTreeMap::new();
+        for node in nodes {
+            nodes_timer_input.extend(node.collect_node_timer_input());
+        }
+        nodes_timer_input
+    }
 }
 
 /// 节点的类型，这里是个枚举，三选一
@@ -344,6 +439,36 @@ pub struct NodeRunConfig {
     pub outputs: BTreeSet<DataId>,
 }
 
+impl NodeRunConfig {
+    /// 将inputs中的timer收集起来，并返回
+    pub fn collect_input_timers(&self) -> BTreeSet<Duration> {
+        self.inputs
+            .values()
+            .filter_map(|input| {
+                if let InputMapping::Timer { interval } = &input.mapping {
+                    Some(*interval)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    /// 将inputs中的timer收集起来，并返回
+    pub fn collect_timer_inputs(&self) -> BTreeMap<DataId, Input> {
+        self.inputs
+            .values()
+            .filter_map(|input| {
+                if let InputMapping::Timer { interval } = &input.mapping {
+                    let duration = FormattedDuration(*interval);
+                    Some((DataId::from(format!("{duration}")), input.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
 /// 描述了Operator的来源
 #[derive(Debug, Serialize, Deserialize, Clone)]
 /// 并且所有都使用中划线分割约定
@@ -353,14 +478,17 @@ pub enum OperatorSource {
     Python(String),
     Wasm(String),
     Shell(String),
+    Source(String),
 }
 
 /// Operator配置信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OperatorConfig {
     /// 名字
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// 描述
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
     /// 自定义节点的运行参数
@@ -368,6 +496,7 @@ pub struct OperatorConfig {
     pub args: Option<String>,
 
     ///环境变量
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub envs: Option<BTreeMap<String, EnvValue>>,
 
     /// 使用中划线分割定义Operator的来源
@@ -387,6 +516,7 @@ pub struct OperatorConfig {
 /// Operator配置信息的包装-单个的op
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SingleOperatorDefinition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<OperatorId>,
     /// 嵌入了OperatorConfig
     #[serde(flatten)]
@@ -414,7 +544,7 @@ pub struct NormalOperatorDefinition {
 #[serde(deny_unknown_fields, from = "InputDef", into = "InputDef")]
 pub struct Input {
     pub mapping: InputMapping,
-    pub queue_size: Option<usize>,
+    pub queue_size: usize,
 }
 /// 使用InputDef来兼容两种输入格式
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,14 +572,15 @@ impl From<Input> for InputDef {
         match input {
             Input {
                 mapping,
-                queue_size: None,
+                // 默认为10
+                queue_size: 10,
             } => Self::MappingOnly(mapping),
             Input {
                 mapping,
                 queue_size,
             } => Self::WithOptions {
                 source: mapping,
-                queue_size,
+                queue_size: Some(queue_size),
             },
         }
     }
@@ -460,11 +591,12 @@ impl From<InputDef> for Input {
         match value {
             InputDef::MappingOnly(mapping) => Self {
                 mapping,
-                queue_size: None,
+                // 默认为10
+                queue_size: 10,
             },
             InputDef::WithOptions { source, queue_size } => Self {
                 mapping: source,
-                queue_size,
+                queue_size: queue_size.unwrap_or(10),
             },
         }
     }

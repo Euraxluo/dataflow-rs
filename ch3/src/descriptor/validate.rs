@@ -1,11 +1,12 @@
 use super::descriptor::{
-    DataId, Descriptor, Input, InputMapping, NormalNode, OperatorId, OperatorSource,
+    DataId, Deploy, Descriptor, Input, InputMapping, NormalNode, OperatorId, OperatorSource,
     UserInputMapping,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::{
     env::consts::{DLL_PREFIX, DLL_SUFFIX, EXE_EXTENSION},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 /// 判断source 来源是不是url 类型
@@ -72,22 +73,31 @@ fn adjust_shared_library_path(path: &Path) -> Result<std::path::PathBuf> {
 }
 
 /// 校验dataflow
-pub(crate) fn check_dataflow(dataflow: &Descriptor, working_dir: &Path) -> Result<()> {
+pub(crate) fn validate_dataflow(dataflow: &Descriptor, working_dir: &Path) -> Result<()> {
     let nodes = dataflow.resolve_node_defaults();
+    // 检查描述文件的 deploy
+    validate_deploy(dataflow.deploy.clone())
+        .with_context(|| anyhow!("dataflow deploy validate error"))?;
     for node in &nodes {
+        // 检查每一个节点的 deploy
+        validate_deploy(node.deploy.clone())
+            .with_context(|| anyhow!("node {:?} deploy validate error", node.id))?;
+
         // 对每一个节点的每一个op进行校验
         for operator_definition in &node.kind.operators {
             // 检查每一个op 的source 是否存在
-            check_source(&operator_definition.config.source, working_dir).with_context(|| {
-                anyhow!(
-                    "failed to check source:{:?} ,work dir is:{:?}",
-                    operator_definition.config.source,
-                    working_dir
-                )
-            })?;
+            validate_source(&operator_definition.config.source, working_dir).with_context(
+                || {
+                    anyhow!(
+                        "failed to check source:{:?} ,work dir is:{:?}",
+                        operator_definition.config.source,
+                        working_dir
+                    )
+                },
+            )?;
             // 检查每一个op 的inputs 是否存在
             for (input_id, input) in &operator_definition.config.run_config.inputs {
-                check_input(
+                validate_input(
                     input,
                     &nodes,
                     &format!("{}/{}/{input_id}", operator_definition.id, node.id),
@@ -99,8 +109,19 @@ pub(crate) fn check_dataflow(dataflow: &Descriptor, working_dir: &Path) -> Resul
     Ok(())
 }
 
+/// 检查deploy
+fn validate_deploy(deploy: Deploy) -> Result<()> {
+    if let Some(endpoints) = deploy.endpoints {
+        if endpoints.is_empty() {
+            return Err(anyhow!("node has no endpoints defined"));
+        }
+    } else {
+        return Err(anyhow!("node has no endpoints defined"));
+    }
+    Ok(())
+}
 /// 检查各种source是否存在
-fn check_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
+fn validate_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
     match source {
         OperatorSource::SharedLibrary(path) => {
             if source_is_url(path) {
@@ -131,12 +152,37 @@ fn check_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
             }
         }
         OperatorSource::Shell(shell) => {
-            if source_is_url(shell) {
-                resolve_url(&shell)
-                    .with_context(|| format!("Could not find shell url `{}`", shell))?;
+            // 如果是shell
+            // 首先进行split with 空格，然后获取第一个命令作为first_cmd
+            let first_cmd = shell
+                .trim()
+                .split_ascii_whitespace()
+                .next()
+                .with_context(|| format!("Could not get exec part from shell: `{}`", shell))?;
+            // 然后根据不同的的操作系统选择不同的命令判断first command 是否可用
+            // 这里还涉及到一个work dir的操作
+            let mut command = if cfg!(target_os = "windows") {
+                Command::new("where")
             } else {
-                resolve_path(shell, working_dir)
-                    .with_context(|| format!("Could not find shell path `{}`", shell))?;
+                Command::new("which")
+            };
+            // 执行命令，并且获取状态
+            let status = command
+                .arg(first_cmd)
+                .status()
+                .with_context(|| format!("Can not exec command: `{}`", first_cmd))?;
+
+            if !status.success() {
+                bail!("Could not find first command: `{first_cmd}` of shell: `{shell}`");
+            }
+        }
+        OperatorSource::Source(source) => {
+            if source_is_url(source) {
+                resolve_url(&source)
+                    .with_context(|| format!("Could not find source url `{}`", source))?;
+            } else {
+                resolve_path(source, working_dir)
+                    .with_context(|| format!("Could not find source path `{}`", source))?;
             }
         }
     }
@@ -144,7 +190,7 @@ fn check_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
 }
 
 /// 检查各种input是否存在
-fn check_input(input: &Input, nodes: &[NormalNode], input_id_str: &str) -> Result<()> {
+fn validate_input(input: &Input, nodes: &[NormalNode], input_id_str: &str) -> Result<()> {
     match &input.mapping {
         InputMapping::Timer { interval: _ } => {}
         InputMapping::User(UserInputMapping { source, output }) => {
@@ -197,6 +243,6 @@ mod tests {
         let working_dir = binding.parent().unwrap();
         println!("working_dir>>> {:#?}", working_dir);
         println!("\n\n\n");
-        check_dataflow(&des, &working_dir).unwrap();
+        validate_dataflow(&des, &working_dir).unwrap();
     }
 }
