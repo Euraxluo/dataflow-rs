@@ -21,9 +21,13 @@ async fn main() -> Result<()> {
             open,
         } => visualize(dataflow, mermaid, open)?,
         // launch 所有的进程
-        Command::Launch { dataflow } => launch(dataflow).await?,
+        Command::Launch { dataflow, build } => launch(dataflow, build).await?,
         // 启动一个节点
-        Command::Start { dataflow, node } => start(dataflow, node).await?,
+        Command::Start {
+            dataflow,
+            node,
+            build,
+        } => start(dataflow, node, build).await?,
     }
 
     // 在主线程中，等待并监听 Ctrl+C 事件
@@ -51,12 +55,13 @@ mod tests {
             Some(PathBuf::from("./demo.yaml")),
             // "python_source_image".into(),
             "dataflow/timer".into(),
+            false,
         )
         .await
         .unwrap();
     }
     #[tokio::test]
     async fn test_launch() {
-        launch(PathBuf::from("./demo.yaml")).await.unwrap();
+        launch(PathBuf::from("./demo.yaml"), true).await.unwrap();
     }
 }

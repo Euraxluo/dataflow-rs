@@ -38,6 +38,10 @@ pub enum Command {
         /// yaml description file path
         #[arg(short, long, value_name = "FILE")]
         dataflow: PathBuf,
+
+        /// 是否执行build
+        #[clap(long, action)]
+        build: bool,
     },
     /// 该命令会启动指定dataflow中的一个节点
     /// Start one Node of a given dataflow path and given NodeId.
@@ -48,6 +52,9 @@ pub enum Command {
         /// start a node
         #[arg(short, long, value_name = "NodeID")]
         node: String,
+        /// 是否执行build
+        #[clap(long, action)]
+        build: bool,
     },
 }
 

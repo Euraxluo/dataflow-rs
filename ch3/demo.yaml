@@ -5,9 +5,14 @@ deploy:
     - tcp/127.0.0.1:7447
   mode: peer
 nodes:
-  # cpp node
   - id: python_source_image
-    shell: demo.yaml -h
+    name: name
+    description:  demo node
+    args:  show -d demo.yaml -o
+    envs:
+      RUST_LOG: info
+    exe_target: ./target/debug/main 
+    build: cargo -V
     inputs:
       tick:
         source: dataflow/timer/millis/100

@@ -128,7 +128,7 @@ impl Descriptor {
                 id: node.id,
                 name: node.name,
                 description: node.description,
-                env: node.env,
+                envs: node.envs,
                 // 处理节点的deploy的默认值
                 deploy: resolve_deploy,
                 // 将node 从 单op节点转为多op节点
@@ -146,8 +146,8 @@ impl Descriptor {
     }
 
     /// 检查当前的yaml文件是否合法
-    pub(crate) fn validate(&self, working_dir: &Path) -> Result<()> {
-        validate_dataflow(self, &working_dir).context("failed to validate yaml")?;
+    pub(crate) fn validate(&self, working_dir: &Path, build: bool) -> Result<()> {
+        validate_dataflow(self, &working_dir, build).context("failed to validate yaml")?;
         Ok(())
     }
 
@@ -317,9 +317,9 @@ pub struct Node {
     /// 节点描述
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// 环境变量设置
+    /// 节点环境变量设置
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<BTreeMap<String, EnvValue>>,
+    pub envs: Option<BTreeMap<String, EnvValue>>,
     /// 部署信息
     #[serde(default)]
     pub deploy: Deploy,
@@ -339,9 +339,9 @@ pub struct NormalNode {
     /// 节点描述
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// 环境变量设置
+    /// 节点环境变量设置
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<BTreeMap<String, EnvValue>>,
+    pub envs: Option<BTreeMap<String, EnvValue>>,
     /// 部署信息
     #[serde(default)]
     pub deploy: Deploy,
@@ -472,13 +472,24 @@ impl NodeRunConfig {
 /// 描述了Operator的来源
 #[derive(Debug, Serialize, Deserialize, Clone)]
 /// 并且所有都使用中划线分割约定
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum OperatorSource {
+    ExeTarget(String),
     SharedLibrary(String),
-    Python(String),
-    Wasm(String),
+    PythonModule(String),
+    WasmModule(String),
     Shell(String),
-    Source(String),
+}
+impl ToString for OperatorSource {
+    fn to_string(&self) -> String {
+        match self {
+            OperatorSource::ExeTarget(target) => target.clone(),
+            OperatorSource::SharedLibrary(library) => library.clone(),
+            OperatorSource::PythonModule(module) => module.clone(),
+            OperatorSource::WasmModule(wasm) => wasm.clone(),
+            OperatorSource::Shell(shell) => shell.clone(),
+        }
+    }
 }
 
 /// Operator配置信息

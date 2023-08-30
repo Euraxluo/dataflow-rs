@@ -1,38 +1,11 @@
+use crate::{adjust_executable_target_path, adjust_shared_library_path, source_is_url};
+
 use super::descriptor::{
     DataId, Deploy, Descriptor, Input, InputMapping, NormalNode, OperatorId, OperatorSource,
     UserInputMapping,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use std::{
-    env::consts::{DLL_PREFIX, DLL_SUFFIX, EXE_EXTENSION},
-    path::{Path, PathBuf},
-    process::Command,
-};
-
-/// 判断source 来源是不是url 类型
-fn source_is_url(path: &str) -> bool {
-    path.starts_with("http://") || path.starts_with("https://")
-}
-
-/// 处理path
-fn resolve_path(source: &str, working_dir: &Path) -> Result<PathBuf> {
-    let path = Path::new(&source);
-    let path = if path.extension().is_none() {
-        path.with_extension(EXE_EXTENSION)
-    } else {
-        path.to_owned()
-    };
-
-    // Search path within current working directory
-    if let Ok(abs_path) = working_dir.join(&path).canonicalize() {
-        Ok(abs_path)
-    // Search path within $PATH
-    } else if let Ok(abs_path) = which::which(&path) {
-        Ok(abs_path)
-    } else {
-        bail!("Could not find source path {}", path.display())
-    }
-}
+use std::{path::Path, process::Command};
 
 /// 处理url，进行网络请求检查
 fn resolve_url(url: &str) -> Result<()> {
@@ -46,34 +19,13 @@ fn resolve_url(url: &str) -> Result<()> {
     }
 }
 
-/// 调整共享库的路径
-fn adjust_shared_library_path(path: &Path) -> Result<std::path::PathBuf> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow!("shared library path has no file name"))?
-        .to_str()
-        .ok_or_else(|| anyhow!("shared library file name is not valid UTF8"))?;
-
-    if file_name.starts_with("lib") {
-        return Err(anyhow!(
-            "Shared library file name must not start with `lib`, prefix is added automatically"
-        ));
-    }
-
-    if path.extension().is_some() {
-        return Err(anyhow!(
-            "Shared library file name must have no extension, it is added automatically"
-        ));
-    }
-
-    let library_filename = format!("{DLL_PREFIX}{file_name}{DLL_SUFFIX}");
-
-    let path = path.with_file_name(library_filename);
-    Ok(path)
-}
-
 /// 校验dataflow
-pub(crate) fn validate_dataflow(dataflow: &Descriptor, working_dir: &Path) -> Result<()> {
+/// 当build为True时，表示需要进行build，所以对于可执行文件的检查可以放宽
+pub(crate) fn validate_dataflow(
+    dataflow: &Descriptor,
+    working_dir: &Path,
+    build: bool,
+) -> Result<()> {
     let nodes = dataflow.resolve_node_defaults();
     // 检查描述文件的 deploy
     validate_deploy(dataflow.deploy.clone())
@@ -86,7 +38,7 @@ pub(crate) fn validate_dataflow(dataflow: &Descriptor, working_dir: &Path) -> Re
         // 对每一个节点的每一个op进行校验
         for operator_definition in &node.kind.operators {
             // 检查每一个op 的source 是否存在
-            validate_source(&operator_definition.config.source, working_dir).with_context(
+            validate_source(&operator_definition.config.source, working_dir, build).with_context(
                 || {
                     anyhow!(
                         "failed to check source:{:?} ,work dir is:{:?}",
@@ -121,7 +73,8 @@ fn validate_deploy(deploy: Deploy) -> Result<()> {
     Ok(())
 }
 /// 检查各种source是否存在
-fn validate_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
+/// build 如果为True，说明需要进行build，所以对于可执行文件的检查可以放宽
+fn validate_source(source: &OperatorSource, working_dir: &Path, build: bool) -> Result<()> {
     match source {
         OperatorSource::SharedLibrary(path) => {
             if source_is_url(path) {
@@ -130,24 +83,24 @@ fn validate_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
             } else {
                 // 调整共享库lib的路径，再判断是否存在
                 let path = adjust_shared_library_path(Path::new(&path))?;
-                if !working_dir.join(&path).exists() {
+                if !working_dir.join(&path).exists() && !build {
                     bail!("no shared library at `{}`", path.display());
                 }
             }
         }
-        OperatorSource::Python(path) => {
+        OperatorSource::PythonModule(path) => {
             if source_is_url(path) {
                 resolve_url(&path)
                     .with_context(|| format!("Could not find Python library url `{}`", path))?;
-            } else if !working_dir.join(path).exists() {
+            } else if !working_dir.join(path).exists() && !build {
                 bail!("no Python library at `{path}`");
             }
         }
-        OperatorSource::Wasm(path) => {
+        OperatorSource::WasmModule(path) => {
             if source_is_url(path) {
                 resolve_url(&path)
                     .with_context(|| format!("Could not find WASM library url `{}`", path))?;
-            } else if !working_dir.join(path).exists() {
+            } else if !working_dir.join(path).exists() && !build {
                 bail!("no WASM library at `{path}`");
             }
         }
@@ -172,17 +125,28 @@ fn validate_source(source: &OperatorSource, working_dir: &Path) -> Result<()> {
                 .status()
                 .with_context(|| format!("Can not exec command: `{}`", first_cmd))?;
 
-            if !status.success() {
+            if !status.success() && !build {
                 bail!("Could not find first command: `{first_cmd}` of shell: `{shell}`");
             }
         }
-        OperatorSource::Source(source) => {
-            if source_is_url(source) {
-                resolve_url(&source)
-                    .with_context(|| format!("Could not find source url `{}`", source))?;
+        OperatorSource::ExeTarget(target) => {
+            if source_is_url(target) {
+                resolve_url(&target)
+                    .with_context(|| format!("Could not find target url `{}`", target))?;
             } else {
-                resolve_path(source, working_dir)
-                    .with_context(|| format!("Could not find source path `{}`", source))?;
+                // build 为 true时，说明，后面会进行build，只需要判断是否是一个合法的target的名字即可
+                // 这里，假如build为True，并且target中没有空格，那么就不需要进行判断
+                // 如果build为false 或者 target中有空格，那么就需要进行判断
+                // 如果build为false, 且target不存在，就会异常
+                // 如果build为true, 但是target中有空格，就会异常，这时target path没有，也会
+                if !build || !target.chars().all(|c| !c.is_whitespace()) {
+                    // 调整可执行文件的路径，再判断是否存在
+                    let path = adjust_executable_target_path(Path::new(&target))?;
+                    if !working_dir.join(&path).exists() {
+                        format!("Could not find target path `{target}`");
+                        bail!("no executable target at `{}`", path.display());
+                    }
+                }
             }
         }
     }
@@ -235,7 +199,7 @@ mod tests {
     fn test_create() {
         let cargo_path = env!("CARGO_MANIFEST_DIR");
         println!("cargo_path>>> {:?}", cargo_path);
-        let dataflow = PathBuf::from(cargo_path.to_string() + "\\example2.yaml");
+        let dataflow = PathBuf::from(cargo_path.to_string() + "\\example.yaml");
         let des = Descriptor::blocking_read(&dataflow).unwrap();
         println!("Descriptor>>> {:#?}", des);
         println!("\n\n\n");
@@ -243,6 +207,6 @@ mod tests {
         let working_dir = binding.parent().unwrap();
         println!("working_dir>>> {:#?}", working_dir);
         println!("\n\n\n");
-        validate_dataflow(&des, &working_dir).unwrap();
+        validate_dataflow(&des, &working_dir, true).unwrap();
     }
 }

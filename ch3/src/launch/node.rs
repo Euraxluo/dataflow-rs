@@ -1,7 +1,9 @@
 use crate::{
     dataflow_description_from_env,
-    descriptor::descriptor::{Descriptor, NormalNode},
-    runtime::timer::{self, TIMER_NODE_ID},
+    descriptor::descriptor::Descriptor,
+    launch,
+    runtime::timer::TIMER_NODE_ID,
+    runtime::{node, timer},
 };
 use anyhow::{anyhow, Context, Result};
 use log::{debug, info};
@@ -15,6 +17,8 @@ pub async fn start(
     dataflow: Option<PathBuf>,
     // 待启动的节点id
     node_id: String,
+    // 是否执行build
+    build: bool,
 ) -> Result<()> {
     info!(
         "Start Node dataflow: {:#?} node_id: {:?}",
@@ -50,7 +54,7 @@ pub async fn start(
 
     // 对描述文件进行校验
     descriptor
-        .validate(&working_dir)
+        .validate(&working_dir, build)
         .context("failed to validate dataflow")?;
 
     // 处理所有节点的默认值
@@ -64,7 +68,7 @@ pub async fn start(
         TIMER_NODE_ID => {
             debug!("Launch TimerNode {:?}", TIMER_NODE_ID);
             // 启动定时器节点
-            timer::start(&nodes, &descriptor.deploy.endpoints.unwrap()).await?;
+            timer::start(&nodes, &descriptor.deploy).await?;
         }
         _ => {
             // 找到我们需要处理的那个节点
@@ -73,15 +77,11 @@ pub async fn start(
                 .find(|n| n.id.to_string() == node_id)
                 .ok_or_else(|| anyhow!("node with id `{}` not found in dataflow ", node_id))?;
             debug!("Launch Node {:?}", node.id);
-            launch_node(node).await?;
+            if build {
+                launch::build::build(&node, &working_dir).await?;
+            }
+            node::start(node, &descriptor.deploy, &working_dir).await?;
         }
     }
     Ok(())
-}
-
-/// 运行节点
-/// 对于每一个节点都spawn一个进程
-async fn launch_node(node: &NormalNode) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    let result = tokio::spawn(async move { Ok(()) });
-    Ok(result)
 }
