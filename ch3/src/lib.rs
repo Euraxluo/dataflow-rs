@@ -112,16 +112,21 @@ where
     T: reqwest::IntoUrl + std::fmt::Display + Copy,
 {
     if target_path.exists() {
-        info!("Using cache: {:?}", target_path.to_str());
+        info!(
+            "Download file: {} using cache: {:?}",
+            url,
+            target_path.to_str()
+        );
         return Ok(());
     }
-
+    // 有可能文件夹不存在
     if let Some(parent) = target_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .context("failed to create parent folder")?;
     }
 
+    // 使用get请求url
     let response = reqwest::get(url)
         .await
         .with_context(|| format!("failed to request operator from `{url}`"))?
@@ -131,11 +136,13 @@ where
     let mut file = tokio::fs::File::create(target_path)
         .await
         .context("failed to create target file")?;
+    // 将url response 写入到文件中
     file.write_all(&response)
         .await
         .context("failed to write downloaded operator to file")?;
     file.sync_all().await.context("failed to `sync_all`")?;
 
+    // 如果是unix，需要设置权限
     #[cfg(unix)]
     file.set_permissions(std::fs::Permissions::from_mode(0o764))
         .await

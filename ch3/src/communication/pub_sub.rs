@@ -43,12 +43,12 @@ impl ZenohCommunicationLayer {
     pub fn init(endpoints: Vec<String>, mode: String, application: String) -> Result<Self> {
         let mut config = ::zenoh::config::Config::default();
         let _ = config.set_mode(WhatAmI::from_str(&mode).ok());
-        let _ = config.set_connect(ConnectConfig {
+        config.connect = ConnectConfig {
             endpoints: endpoints
                 .iter()
                 .filter_map(|e| EndPoint::from_str(e).ok())
                 .collect(),
-        });
+        };
         let session = zenoh::open(config)
             .res_sync()
             .map_err(|e| anyhow!(e))?

@@ -3,14 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    adjust_executable_target_path,
-    descriptor::descriptor::{Deploy, NormalOperatorDefinition, OperatorSource},
-    download_file, source_is_url,
-};
-use anyhow::{anyhow, Context, Result};
+use crate::descriptor::descriptor::{Deploy, NormalOperatorDefinition, OperatorSource};
+use anyhow::Result;
 use log::debug;
-use tokio::process::Command;
 
 use self::{exe_target::ExeTarget, shell::Shell};
 

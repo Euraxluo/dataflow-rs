@@ -1,3 +1,4 @@
+#[warn(dead_code)]
 pub mod descriptor;
 mod mermaid;
 pub mod visualize;
