@@ -869,3 +869,15 @@ end
   runtime-node/rust-operator -- status as message --> rust-sink/rust-sink
 
 ```
+
+2. runtime 部分
+架构：
+![runtime 架构](ch3_runtime_架构.png)
+
+
+
+
+## ch4:
+在ch4中，我们需要实现多个语言的SDK
+
+首先我们需要确定每个语言的SDK的功能以及使用方式

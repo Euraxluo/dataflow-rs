@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "sdk/python",
+    "sdk/c",
+    "sdk/cpp",
+    "sdk/rust",
+    "examples/benchmark",
+    "dataflow"
+]
